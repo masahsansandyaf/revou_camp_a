@@ -1,0 +1,232 @@
+// Prisma Schema — Academic Potential Test
+// Feature: academic-potential-test
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── User ─────────────────────────────────────────────────────────────────────
+
+enum UserStatus {
+  unverified
+  active
+  suspended
+}
+
+enum UserRole {
+  user
+  admin
+}
+
+model User {
+  id                       String     @id @default(uuid())
+  fullName                 String     @db.VarChar(100)
+  email                    String     @unique @db.VarChar(254)
+  passwordHash             String
+  role                     UserRole   @default(user)
+  status                   UserStatus @default(unverified)
+  emailVerificationToken   String?
+  emailVerificationExpiry  DateTime?
+  passwordResetToken       String?
+  passwordResetExpiry      DateTime?
+  loginAttempts            Int        @default(0)
+  lockoutUntil             DateTime?
+  lastActivityAt           DateTime   @default(now())
+  createdAt                DateTime   @default(now())
+  updatedAt                DateTime   @updatedAt
+
+  // relations
+  sessions                 TestSession[]
+  results                  TestResult[]
+  createdQuestions         Question[]
+
+  @@map("users")
+}
+
+// ─── TestCategory ─────────────────────────────────────────────────────────────
+
+enum TestCategoryType {
+  verbal
+  numeric
+  logic
+}
+
+model TestCategory {
+  id          String           @id @default(uuid())
+  name        String           @db.VarChar(50)
+  type        TestCategoryType @unique
+  description String
+
+  // relations
+  questions   Question[]
+
+  @@map("test_categories")
+}
+
+// ─── Question & AnswerOption ──────────────────────────────────────────────────
+
+model Question {
+  id          String       @id @default(uuid())
+  text        String
+  categoryId  String
+  explanation String       @db.VarChar(300)
+  createdBy   String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  // relations
+  category    TestCategory       @relation(fields: [categoryId], references: [id])
+  creator     User               @relation(fields: [createdBy], references: [id])
+  options     AnswerOption[]
+  packages    PackageQuestion[]
+
+  @@map("questions")
+}
+
+model AnswerOption {
+  id         String   @id @default(uuid())
+  questionId String
+  text       String
+  isCorrect  Boolean  @default(false)
+
+  // relations
+  question   Question       @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  answers    SessionAnswer[]
+
+  @@map("answer_options")
+}
+
+// ─── TestPackage & PackageQuestion ────────────────────────────────────────────
+
+enum TestPackageStatus {
+  draft
+  active
+  archived
+}
+
+model TestPackage {
+  id               String            @id @default(uuid())
+  name             String
+  description      String            @db.VarChar(300)
+  timeLimitMinutes Int
+  status           TestPackageStatus @default(draft)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  // relations
+  questions        PackageQuestion[]
+  sessions         TestSession[]
+  results          TestResult[]
+
+  @@map("test_packages")
+}
+
+model PackageQuestion {
+  packageId  String
+  questionId String
+  order      Int
+
+  // relations
+  package    TestPackage @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  question   Question    @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@id([packageId, questionId])
+  @@unique([packageId, order])
+  @@map("package_questions")
+}
+
+// ─── TestSession & SessionAnswer ─────────────────────────────────────────────
+
+enum TestSessionStatus {
+  in_progress
+  completed
+  timed_out
+}
+
+model TestSession {
+  id          String            @id @default(uuid())
+  userId      String
+  packageId   String
+  status      TestSessionStatus @default(in_progress)
+  startedAt   DateTime          @default(now())
+  finishedAt  DateTime?
+  timeoutAt   DateTime
+  syncPending Boolean           @default(false)
+  createdAt   DateTime          @default(now())
+
+  // relations
+  user        User           @relation(fields: [userId], references: [id])
+  package     TestPackage    @relation(fields: [packageId], references: [id])
+  answers     SessionAnswer[]
+  result      TestResult?
+
+  @@index([userId, packageId])
+  @@map("test_sessions")
+}
+
+model SessionAnswer {
+  id               String      @id @default(uuid())
+  sessionId        String
+  questionId       String
+  selectedOptionId String?
+  savedAt          DateTime    @default(now())
+
+  // relations
+  session          TestSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  selectedOption   AnswerOption? @relation(fields: [selectedOptionId], references: [id])
+
+  @@unique([sessionId, questionId])
+  @@map("session_answers")
+}
+
+// ─── TestResult & CategoryScore ───────────────────────────────────────────────
+
+enum AbilityLabel {
+  di_bawah_rata_rata  // 0–49
+  rata_rata           // 50–69
+  di_atas_rata_rata   // 70–84
+  unggul              // 85–100
+}
+
+model TestResult {
+  id               String       @id @default(uuid())
+  sessionId        String       @unique
+  userId           String
+  packageId        String
+  totalScore       Decimal      @db.Decimal(5, 2)
+  abilityLabel     AbilityLabel
+  correctCount     Int
+  incorrectCount   Int
+  unansweredCount  Int
+  completedAt      DateTime
+  createdAt        DateTime     @default(now())
+
+  // relations
+  session          TestSession     @relation(fields: [sessionId], references: [id])
+  user             User            @relation(fields: [userId], references: [id])
+  package          TestPackage     @relation(fields: [packageId], references: [id])
+  categoryScores   CategoryScore[]
+
+  @@index([userId, packageId])
+  @@map("test_results")
+}
+
+model CategoryScore {
+  id           String     @id @default(uuid())
+  resultId     String
+  categoryId   String
+  categoryName String     @db.VarChar(50)
+  correctCount Int
+  totalCount   Int
+  score        Decimal    @db.Decimal(5, 2)
+
+  // relations
+  result       TestResult @relation(fields: [resultId], references: [id], onDelete: Cascade)
+
+  @@map("category_scores")
+}
